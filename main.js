@@ -1,6 +1,7 @@
 const http = require('http');
 const fs = require('fs/promises');
 const { program } = require('commander');
+const superagent = require('superagent');
 
 
 program
@@ -33,7 +34,6 @@ const server = http.createServer(async (req, res) => {
   const statusCode = url.slice(1); 
   const filePath = path.join(cache, `${statusCode}.jpeg`);
 
-  
   if (!/^\d+$/.test(statusCode)) {
     res.writeHead(400, { 'Content-Type': 'text/plain; charset=utf-8' });
     return res.end('Некоректний запит. URL має містити числовий код HTTP.');
@@ -41,16 +41,40 @@ const server = http.createServer(async (req, res) => {
 
   switch (method) {
     case 'GET':
+  try {
+    const data = await fs.readFile(filePath);
+    console.log('Зображення взято з кешу.');
+    res.writeHead(200, { 'Content-Type': 'image/jpeg' });
+    res.end(data);
+  } catch (error) {
+    if (error.code === 'ENOENT') {
+      console.log(`Зображення для коду ${statusCode} немає в кеші. Завантаження з http.cat...`);
       try {
-        const data = await fs.readFile(filePath);
-        res.writeHead(200, { 'Content-Type': 'image/jpeg' });
-        res.end(data);
-      } catch (error) {
- 
-        res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
-        res.end('Зображення не знайдено в кеші.');
+        const response = await superagent
+          .get(`https://http.cat/${statusCode}`)
+          .ok(() => true); 
+
+        if (response.status === 200) {
+          await fs.writeFile(filePath, response.body);
+          console.log('Зображення завантажено і збережено в кеш.');
+          res.writeHead(200, { 'Content-Type': 'image/jpeg' });
+          res.end(response.body);
+        } else {
+          console.log(`http.cat повернув статус ${response.status}`);
+          res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
+          res.end('Не вдалося знайти зображення на сервері http.cat.');
+        }
+      } catch (fetchError) {
+        res.writeHead(500, { 'Content-Type': 'text/plain; charset=utf-8' });
+        res.end('Помилка при завантаженні зображення з http.cat.');
       }
-      break;
+    } else {
+      res.writeHead(500, { 'Content-Type': 'text/plain; charset=utf-8' });
+      res.end('Внутрішня помилка сервера при читанні файлу.');
+    }
+  }
+  break;
+
 
     case 'PUT':
       try {
